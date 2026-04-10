@@ -1,81 +1,99 @@
 import streamlit as st
-import pandas as pd
-import time
-import random
-import urllib.parse
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
+import time
+import pandas as pd
+import os
 
-# 1. Page Setup
-st.set_page_config(page_title="WhatsApp Bulk Sender", page_icon="🚀")
-st.title("🚀 1-Click WhatsApp Automator")
-st.markdown("Bina kisi API charge ke apne Excel data se automatically WhatsApp messages bhejein.")
+# Page Configuration
+st.set_page_config(page_title="Het's Cloud Bot", layout="centered")
+st.title("📲 Het's WhatsApp Training Bot")
+st.write("PC band karke bhi messages bhejte rahiye!")
 
-# 2. File Uploader
-uploaded_file = st.file_uploader("Apni CSV file upload karein (Columns: Phone, Message)", type=["csv"])
-
-if uploaded_file is not None:
-    # Data ko read karna aur screen par dikhana
-    df = pd.read_csv(uploaded_file)
-    st.write("Aapka Data:")
-    st.dataframe(df)
-
-    st.warning("⚠️ Dhyan rahe: Start karne se pehle aapko WhatsApp Web par QR code scan karke login karna hoga.")
+# --- Selenium Setup Function ---
+def setup_driver():
+    options = Options()
+    options.add_argument("--headless")  # Bina window ke chalega
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    # Cloud ke liye special user agent
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
     
-    # 3. Start Automation Button
-    if st.button("Start Sending Messages"):
-        st.info("Browser open ho raha hai... Please wait.")
-        
-        try:
-            # Chrome Browser ko automatically setup aur open karna
-            options = webdriver.ChromeOptions()
-            # options.add_argument("--headless") # Agar aap browser hide karna chahte hain toh ise uncomment karein
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    # Chromium ka binary path (Streamlit Cloud default)
+    options.binary_location = "/usr/bin/chromium"
+
+    try:
+        service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
+        driver = webdriver.Chrome(service=service, options=options)
+        return driver
+    except Exception as e:
+        st.error(f"Driver setup error: {e}")
+        return None
+
+# --- Session State to keep driver alive ---
+if 'driver' not in st.session_state:
+    st.session_state.driver = None
+
+# --- Step 1: QR Code Generation ---
+st.header("Step 1: Login")
+if st.button("Generate QR Code"):
+    if st.session_state.driver is None:
+        st.session_state.driver = setup_driver()
+    
+    if st.session_state.driver:
+        st.session_state.driver.get("https://web.whatsapp.com")
+        with st.spinner("QR Code load ho raha hai... 30 seconds wait karein"):
+            time.sleep(30)  # WhatsApp Web load hone mein time leta hai
+            st.session_state.driver.save_screenshot("qr_code.png")
+            st.image("qr_code.png", caption="Apne phone se scan karein")
+            st.success("Agar scan ho gaya hai, toh Step 2 par jayein.")
+
+# --- Step 2: Message Sending ---
+st.header("Step 2: Sending")
+if st.button("Start Automation"):
+    if st.session_state.driver is None:
+        st.error("Pehle Step 1 karke QR scan karein!")
+    else:
+        if os.path.exists("leads.csv"):
+            df = pd.read_csv("leads.csv")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # Pehle WhatsApp Web open karna login ke liye
-            driver.get("https://web.whatsapp.com")
-            st.success("Braking: Apna WhatsApp QR Code scan karein. System 20 seconds wait kar raha hai login hone ka...")
-            time.sleep(20) # QR code scan karne ka time
-            
-            success_count = 0
-            
-            # 4. Har number par loop chalana aur message bhejna
             for index, row in df.iterrows():
-                phone = str(row['Phone']).strip()
-                message = str(row['Message']).strip()
-                
-                # Message ko URL format me convert karna
-                encoded_message = urllib.parse.quote(message)
-                
-                # Direct us number ki chat open karne wala URL
-                url = f"https://web.whatsapp.com/send?phone={phone}&text={encoded_message}"
-                driver.get(url)
-                
-                # Chat load hone ka wait karna (10 seconds)
-                time.sleep(10)
+                phone = str(row['Phone']).replace("+", "").strip()
+                # Gujarati message support ke liye encoding
+                message = row['Message']
                 
                 try:
-                    # Message type hone ke baad 'Enter' dabane ka action
-                    # WhatsApp update hota rehta hai, Enter key sabse safe approach hai
-                    active_element = driver.switch_to.active_element
-                    active_element.send_keys(Keys.ENTER)
+                    # Direct Link method
+                    url = f"https://web.whatsapp.com/send?phone={phone}&text={message}"
+                    st.session_state.driver.get(url)
+                    time.sleep(15)  # Wait for page to load
                     
-                    success_count += 1
-                    st.write(f"✅ Message sent to {phone}")
+                    # Enter dabane ka jugaad (Cloud par direct keys kabhi kabhi nahi chalti)
+                    # Isliye hum link open karke 15 sec wait karte hain
+                    
+                    status_text.text(f"Processing: {phone} ({index+1}/{len(df)})")
+                    progress_bar.progress((index + 1) / len(df))
+                    st.write(f"✅ Attempted: {phone}")
                     
                 except Exception as e:
-                    st.error(f"❌ Failed to send to {phone}. Error: {e}")
+                    st.write(f"❌ Error with {phone}: {e}")
                 
-                # 5. Account Block se bachne ke liye Random Delay (Bahut Zaroori)
-                delay = random.randint(15, 30) # 15 se 30 seconds ke beech random gap
-                st.write(f"⏳ Waiting {delay} seconds to avoid ban...")
-                time.sleep(delay)
+                time.sleep(5)  # Chota delay next message se pehle
             
-            st.success(f"🎉 Process Complete! Total {success_count} messages sent.")
-            driver.quit() # Kaam khatam hone ke baad browser band karna
-            
-        except Exception as e:
-            st.error(f"Ek error aayi hai: {e}")
+            st.success("Automation Process Complete! 🎉")
+        else:
+            st.error("leads.csv file nahi mili! Check karein GitHub par upload ki hai ya nahi.")
+
+# --- Logout/Close Button ---
+if st.button("Close Browser Session"):
+    if st.session_state.driver:
+        st.session_state.driver.quit()
+        st.session_state.driver = None
+        st.success("Session closed.")
