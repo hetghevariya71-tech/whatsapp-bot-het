@@ -2,98 +2,103 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
 import time
 import pandas as pd
 import os
 
-# Page Configuration
-st.set_page_config(page_title="Het's Cloud Bot", layout="centered")
-st.title("📲 Het's WhatsApp Training Bot")
-st.write("PC band karke bhi messages bhejte rahiye!")
+# Page Config
+st.set_page_config(page_title="Het's Ultimate Cloud Bot", layout="wide")
+st.title("🚀 Het's WhatsApp Automation (Cloud Version)")
 
-# --- Selenium Setup Function ---
 def setup_driver():
     options = Options()
-    options.add_argument("--headless")  # Bina window ke chalega
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    # Cloud ke liye special user agent
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-    
-    # Chromium ka binary path (Streamlit Cloud default)
     options.binary_location = "/usr/bin/chromium"
-
+    
     try:
         service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
         driver = webdriver.Chrome(service=service, options=options)
         return driver
     except Exception as e:
-        st.error(f"Driver setup error: {e}")
+        st.error(f"Driver Error: {e}")
         return None
 
-# --- Session State to keep driver alive ---
 if 'driver' not in st.session_state:
     st.session_state.driver = None
 
-# --- Step 1: QR Code Generation ---
-st.header("Step 1: Login")
-if st.button("Generate QR Code"):
-    if st.session_state.driver is None:
-        st.session_state.driver = setup_driver()
-    
-    if st.session_state.driver:
-        st.session_state.driver.get("https://web.whatsapp.com")
-        with st.spinner("QR Code load ho raha hai... 30 seconds wait karein"):
-            time.sleep(30)  # WhatsApp Web load hone mein time leta hai
-            st.session_state.driver.save_screenshot("qr_code.png")
-            st.image("qr_code.png", caption="Apne phone se scan karein")
-            st.success("Agar scan ho gaya hai, toh Step 2 par jayein.")
+# --- UI Side ---
+col1, col2 = st.columns(2)
 
-# --- Step 2: Message Sending ---
-st.header("Step 2: Sending")
-if st.button("Start Automation"):
-    if st.session_state.driver is None:
-        st.error("Pehle Step 1 karke QR scan karein!")
-    else:
-        if os.path.exists("leads.csv"):
+with col1:
+    st.header("Step 1: Login")
+    if st.button("Generate QR Code"):
+        st.session_state.driver = setup_driver()
+        st.session_state.driver.get("https://web.whatsapp.com")
+        with st.spinner("Loading WhatsApp Web... (30 sec)"):
+            time.sleep(35)
+            st.session_state.driver.save_screenshot("qr.png")
+            st.image("qr.png", caption="Scan QR from Mobile")
+
+with col2:
+    st.header("Step 2: Sending")
+    if st.button("Start Bulk Sending"):
+        if not st.session_state.driver:
+            st.error("Pehle QR scan karein!")
+        elif not os.path.exists("leads.csv"):
+            st.error("leads.csv file nahi mili!")
+        else:
             df = pd.read_csv("leads.csv")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            st.info(f"Processing {len(df)} contacts...")
+            progress = st.progress(0)
             
             for index, row in df.iterrows():
                 phone = str(row['Phone']).replace("+", "").strip()
-                # Gujarati message support ke liye encoding
                 message = row['Message']
                 
                 try:
-                    # Direct Link method
+                    # Link Open
                     url = f"https://web.whatsapp.com/send?phone={phone}&text={message}"
                     st.session_state.driver.get(url)
-                    time.sleep(15)  # Wait for page to load
                     
-                    # Enter dabane ka jugaad (Cloud par direct keys kabhi kabhi nahi chalti)
-                    # Isliye hum link open karke 15 sec wait karte hain
+                    # Wait for Send Button to appear
+                    time.sleep(15) 
                     
-                    status_text.text(f"Processing: {phone} ({index+1}/{len(df)})")
-                    progress_bar.progress((index + 1) / len(df))
-                    st.write(f"✅ Attempted: {phone}")
+                    # 4-Method Click Logic
+                    click_script = """
+                    var methods = [
+                        () => document.querySelector('span[data-icon="send"]').parentElement.click(),
+                        () => document.querySelector('button[aria-label="Send"]').click(),
+                        () => { 
+                            var event = new KeyboardEvent('keydown', {keyCode: 13, which: 13, bubbles: true});
+                            document.querySelector('div[contenteditable="true"]').dispatchEvent(event);
+                        },
+                        () => document.querySelector('footer button').click()
+                    ];
+                    for (let m of methods) { try { m(); break; } catch(e) {} }
+                    """
+                    st.session_state.driver.execute_script(click_script)
                     
+                    st.write(f"✅ {index+1}. Sent to {phone}")
                 except Exception as e:
-                    st.write(f"❌ Error with {phone}: {e}")
+                    st.write(f"❌ {index+1}. Failed {phone}")
                 
-                time.sleep(5)  # Chota delay next message se pehle
+                progress.progress((index + 1) / len(df))
+                time.sleep(5) # Delay to avoid ban
             
-            st.success("Automation Process Complete! 🎉")
-        else:
-            st.error("leads.csv file nahi mili! Check karein GitHub par upload ki hai ya nahi.")
+            st.success("Sabb kaam ho gaya! PC band kar sakte ho. 🎉")
 
-# --- Logout/Close Button ---
-if st.button("Close Browser Session"):
+if st.button("Stop & Close"):
     if st.session_state.driver:
         st.session_state.driver.quit()
         st.session_state.driver = None
-        st.success("Session closed.")
+        st.success("Stopped.")
